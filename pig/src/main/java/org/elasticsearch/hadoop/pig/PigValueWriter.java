@@ -113,22 +113,18 @@ public class PigValueWriter implements ValueWriter<PigTuple>, SettingsAware {
         case 70: //DataType.BIGDECIMAL
             throw new EsHadoopSerializationException("Big decimals are not supported by Elasticsearch - consider using a different type (such as string)");
         case DataType.MAP:
-            ResourceSchema nestedSchema = field.getSchema();
-
-            // empty tuple shortcut
-            if (nestedSchema == null) {
-                generator.writeBeginObject();
-                generator.writeEndObject();
-                break;
+            ResourceSchema nestedSchema = null;
+            ResourceFieldSchema[] nestedFields = null;
+            if (field != null) {
+                nestedSchema = field.getSchema();
+                nestedFields = nestedSchema.getFields();
             }
-
-            ResourceFieldSchema[] nestedFields = nestedSchema.getFields();
 
             generator.writeBeginObject();
             // Pig maps are actually String -> Object association so we can save the key right away
             for (Map.Entry<?, ?> entry : ((Map<?, ?>) object).entrySet()) {
                 generator.writeFieldName(alias.toES(entry.getKey().toString()));
-                write(entry.getValue(), nestedFields[0], generator);
+                write(entry.getValue(), (nestedFields != null ? nestedFields[0] : null), generator);
             }
             generator.writeEndObject();
             break;
@@ -138,16 +134,11 @@ public class PigValueWriter implements ValueWriter<PigTuple>, SettingsAware {
             break;
 
         case DataType.BAG:
-            nestedSchema = field.getSchema();
-
-            // empty tuple shortcut
-            if (nestedSchema == null) {
-                generator.writeBeginArray();
-                generator.writeEndArray();
-                break;
+            ResourceFieldSchema bagType = null;
+            if (field != null) {
+                nestedSchema = field.getSchema();
+                bagType = nestedSchema.getFields()[0];
             }
-
-            ResourceFieldSchema bagType = nestedSchema.getFields()[0];
 
             generator.writeBeginArray();
             for (Tuple tuple : (DataBag) object) {
@@ -169,14 +160,17 @@ public class PigValueWriter implements ValueWriter<PigTuple>, SettingsAware {
     }
 
     private boolean writeTuple(Object object, ResourceFieldSchema field, Generator generator, boolean writeTupleFieldNames, boolean isRoot) {
-        ResourceSchema nestedSchema = field.getSchema();
+        ResourceSchema nestedSchema = null;
+        if (field != null) {
+            nestedSchema = field.getSchema();
+        }
 
         boolean result = true;
         boolean writeAsObject = isRoot || writeTupleFieldNames;
 
-        boolean isEmpty = (nestedSchema == null);
+        boolean isEmpty = (field != null && nestedSchema == null);
 
-        if (!isEmpty) {
+        if (!isEmpty && nestedSchema != null) {
             // check if the tuple contains only empty fields
             boolean allEmpty = true;
             for (ResourceFieldSchema nestedField : nestedSchema.getFields()) {
@@ -200,7 +194,10 @@ public class PigValueWriter implements ValueWriter<PigTuple>, SettingsAware {
             return result;
         }
 
-        ResourceFieldSchema[] nestedFields = nestedSchema.getFields();
+        ResourceFieldSchema[] nestedFields = null;
+        if (nestedSchema != null) {
+            nestedFields = nestedSchema.getFields();
+        }
 
         // use getAll instead of get(int) to avoid having to handle Exception...
         List<Object> tuples = ((Tuple) object).getAll();
@@ -213,14 +210,15 @@ public class PigValueWriter implements ValueWriter<PigTuple>, SettingsAware {
             generator.writeBeginObject();
         }
 
-        for (int i = 0; i < nestedFields.length; i++) {
+        int len = (nestedFields != null ? nestedFields.length : tuples.size());
+        for (int i = 0; i < len; i++) {
             if (writeAsObject) {
-                String name = nestedFields[i].getName();
+                String name = (nestedFields != null ? nestedFields[i].getName() : null);
                 // handle schemas without names
                 name = (StringUtils.hasText(name) ? alias.toES(name) : Integer.toString(i));
                 generator.writeFieldName(name);
             }
-            result &= write(tuples.get(i), nestedFields[i], generator);
+            result &= write(tuples.get(i), (nestedFields != null ? nestedFields[i] : null), generator);
         }
         if (writeAsObject) {
             generator.writeEndObject();
@@ -231,7 +229,6 @@ public class PigValueWriter implements ValueWriter<PigTuple>, SettingsAware {
 
         return result;
     }
-
 
     protected boolean handleUnknown(Object value, ResourceFieldSchema field, Generator generator) {
         return false;
